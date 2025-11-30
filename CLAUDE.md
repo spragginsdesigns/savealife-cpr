@@ -10,6 +10,8 @@ SaveALife CPR Bot automates registration of CPR/First Aid course participants fr
 - Participant registration (new or existing contacts)
 - Email notifications and Bookeo booking updates
 
+**Why this project exists:** The original `lambda_function.py` stopped working when Canadian Red Cross updated their MyRC portal's authentication flow and APIs. This rewrite (`cpr_bot.py`) adapts to the new B2C two-step auth and updated API structure.
+
 ## Development Commands
 
 ```bash
@@ -50,6 +52,47 @@ The bot uses a six-step authentication process:
 - B2C Policy: `B2C_1A_MYRC_SIGNUP_SIGNIN` (case-sensitive)
 - SecureConfiguration: Extracted from `data-view-layouts` attribute (base64 JSON)
 - Course search endpoint: `/_services/entity-grid-data.json/6d6b3012-e709-4c45-a00d-df4b3befc518`
+
+### MyRC OData API Endpoints
+
+These are the current REST/OData endpoints (as of Nov 2025):
+
+**Contact Search:**
+```
+GET /_api/contacts?$filter=(lastname eq 'DOE' and emailaddress1 eq 'john@example.com' and statecode eq 0)
+```
+
+**Create Contact:**
+```
+POST /_api/contacts
+Content-Type: application/json
+
+{
+  "firstname": "John",
+  "lastname": "Doe",
+  "emailaddress1": "john@example.com",
+  "address1_line1": "123 Main St",
+  "address1_city": "Toronto",
+  "address1_stateorprovince": "ON",
+  "address1_postalcode": "M5V 1A1",
+  "telephone1": "(416) 555-1234"
+}
+```
+
+**Add Participant to Course Session:**
+```
+POST /_api/crc_courseparticipants
+Content-Type: application/json
+
+{
+  "crc_attendee@odata.bind": "/contacts(CONTACT_GUID)",
+  "crc_coursesession@odata.bind": "/crc_coursesessions(SESSION_GUID)",
+  "crc_participanttype": "0",
+  "crc_status": "171120001"
+}
+```
+
+Note: These endpoints may change when MyRC updates their portal. The original `lambda_function.py` used form-based endpoints that are now deprecated.
 
 ### Course Type Mappings
 Bookeo course names map to MyRC types:

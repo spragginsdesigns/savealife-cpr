@@ -206,91 +206,127 @@ the participants in bookeo.
         url = f'{self.MYRC_BASE_URL}/_services/entity-grid-data.json/6d6b3012-e709-4c45-a00d-df4b3befc518'
         return self.session.post(url, headers=headers, data=data)
 
-    def _get_contact_search_page(self) -> requests.Response:
-        """Get the contact search page for a course session (Updated Nov 2025)."""
-        # New URL structure: /CourseManagement/SessionParticipantsandInstructors/ContactSearch/?id=...
-        params = {'id': self.job_ids["ref_id"]}
-        return self.session.get(
-            f'{self.MYRC_BASE_URL}/CourseManagement/SessionParticipantsandInstructors/ContactSearch/',
+    def _search_contact_api(self, verif_token: str) -> Optional[Dict[str, Any]]:
+        """
+        Search for existing contact using new OData API (Updated Nov 2025).
+
+        Returns:
+            Contact data dict if found, None if not found
+        """
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            '__RequestVerificationToken': verif_token,
+        }
+
+        # OData query to search contacts by last name and email
+        params = {
+            '$select': 'contactid,fullname,birthdate,adx_identity_username,address1_line1,address1_line2,address1_city,address1_stateorprovince,address1_postalcode',
+            '$filter': f"(lastname eq '{self.parsed_webhook['last_name']}' and emailaddress1 eq '{self.parsed_webhook['email']}' and statecode eq 0)"
+        }
+
+        response = self.session.get(
+            f'{self.MYRC_BASE_URL}/_api/contacts',
+            headers=headers,
             params=params
         )
+        response.raise_for_status()
 
-    def _search_contact(self, view_state: str, view_state_gen: str,
-                        event_validation: str) -> requests.Response:
-        """Search for existing contact in Red Cross database."""
-        params = {'id': self.job_ids["ref_id"]}
-        data = {
-            '__VIEWSTATE': view_state,
-            '__VIEWSTATEGENERATOR': view_state_gen,
-            '__EVENTVALIDATION': event_validation,
-            'ctl00$ctl00$ContentContainer$MainContent$txtName': self.parsed_webhook["last_name"],
-            'ctl00$ctl00$ContentContainer$MainContent$txtEmail': self.parsed_webhook["email"],
-            'ctl00$ctl00$ContentContainer$MainContent$btnSearch': 'Search'
+        data = response.json()
+        contacts = data.get('value', [])
+
+        if contacts:
+            return contacts[0]  # Return first matching contact
+        return None
+
+    def _create_contact_api(self, verif_token: str) -> Optional[str]:
+        """
+        Create a new contact using OData API (Updated Nov 2025).
+
+        Returns:
+            Contact ID if successful, None otherwise
+        """
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            '__RequestVerificationToken': verif_token,
         }
-        return self.session.post(
-            f'{self.MYRC_BASE_URL}/CourseManagement/SessionParticipantsandInstructors/ContactSearch/',
-            params=params,
-            data=data
+
+        # Build contact data
+        contact_data = {
+            'firstname': self.parsed_webhook['first_name'],
+            'lastname': self.parsed_webhook['last_name'],
+            'emailaddress1': self.parsed_webhook['email'],
+            'address1_line1': self.parsed_webhook['line1'],
+            'address1_line2': self.parsed_webhook['line2'],
+            'address1_city': self.parsed_webhook['city'],
+            'address1_stateorprovince': self.parsed_webhook['province'],
+            'address1_postalcode': self.parsed_webhook['postal_code'],
+            'telephone1': self.parsed_webhook['phone'],
+        }
+
+        # Remove empty values
+        contact_data = {k: v for k, v in contact_data.items() if v}
+
+        response = self.session.post(
+            f'{self.MYRC_BASE_URL}/_api/contacts',
+            headers=headers,
+            json=contact_data
         )
 
-    def _get_roster_submission_page(self) -> requests.Response:
-        """Get the roster submission page for new participant."""
-        params = {
-            'refentity': 'crc_coursesession',
-            'refid': self.job_ids["ref_id"],
-            'refrel': 'crc_coursesession_crc_courseparticipant',
+        if response.status_code in (200, 201, 204):
+            # Contact ID is returned in the entityid header
+            contact_id = response.headers.get('entityid')
+            return contact_id
+
+        print(f"Failed to create contact: {response.status_code} - {response.text}")
+        return None
+
+    def _add_participant_api(self, verif_token: str, contact_id: str) -> bool:
+        """
+        Add participant to course session using OData API (Updated Nov 2025).
+
+        Args:
+            verif_token: Request verification token
+            contact_id: The contact's GUID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            '__RequestVerificationToken': verif_token,
         }
-        return self.session.get(
-            f'{self.MYRC_BASE_URL}/en/CourseManagement/SessionDetails/RosterSubmission/',
-            params=params
+
+        # Build participant data using OData binding syntax
+        participant_data = {
+            'crc_attendee@odata.bind': f'/contacts({contact_id})',
+            'crc_coursesession@odata.bind': f'/crc_coursesessions({self.job_ids["ref_id"]})',
+            'crc_participanttype': '0',  # 0 = Participant
+            'crc_status': '171120001',  # Status code
+        }
+
+        # Add CPR level if specified
+        if self.parsed_webhook.get('cpr_level'):
+            participant_data['crc_cprlevel'] = self.parsed_webhook['cpr_level']
+
+        response = self.session.post(
+            f'{self.MYRC_BASE_URL}/_api/crc_courseparticipants',
+            headers=headers,
+            json=participant_data
         )
 
-    def _submit_new_participant(self, view_state: str, view_state_gen: str) -> requests.Response:
-        """Submit new participant information."""
-        params = {
-            'refentity': 'crc_coursesession',
-            'refid': self.job_ids["ref_id"],
-            'refrel': 'crc_coursesession_crc_courseparticipant',
-        }
-        data = {
-            '__EVENTTARGET': 'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$NextButton',
-            '__VIEWSTATE': view_state,
-            '__VIEWSTATEGENERATOR': view_state_gen,
-            'EntityFormView_EntityName': 'contact',
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$crc_language': '171120000',
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$firstname': self.parsed_webhook["first_name"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$lastname': self.parsed_webhook["last_name"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$emailaddress1': self.parsed_webhook["email"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$address1_line1': self.parsed_webhook["line1"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$address1_line2': self.parsed_webhook["line2"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$address1_city': self.parsed_webhook["city"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$address1_stateorprovince': self.parsed_webhook["province"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$telephone1': self.parsed_webhook["phone"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$WebFormControl$EntityFormView$address1_postalcode': self.parsed_webhook["postal_code"]
-        }
-        return self.session.post(
-            f'{self.MYRC_BASE_URL}/en/CourseManagement/SessionDetails/RosterSubmission/',
-            params=params,
-            data=data
-        )
+        if response.status_code in (200, 201, 204):
+            return True
 
-    def _finalize_registration(self, final_submit_url: str, participantid: str,
-                                view_state: str, view_state_gen: str) -> requests.Response:
-        """Final step to add participant to course."""
-        data = {
-            '__EVENTTARGET': 'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$InsertButton',
-            '__VIEWSTATE': view_state,
-            '__VIEWSTATEGENERATOR': view_state_gen,
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$EntityFormControl_EntityFormView_EntityName': 'crc_courseparticipant',
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$crc_coursesession': self.job_ids["ref_id"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$crc_coursesession_entityname': 'crc_coursesession',
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$crc_attendee': participantid,
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$crc_attendee_entityname': 'contact',
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$crc_cprlevel': self.parsed_webhook["cpr_level"],
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$crc_participanttype': '0',
-            'ctl00$ctl00$ContentContainer$MainContent$EntityControls$EntityFormControl$EntityFormControl_EntityFormView$crc_status': '171120001'
-        }
-        return self.session.post(final_submit_url, data=data)
+        # Check for "already registered" error
+        if 'already registered' in response.text.lower():
+            print(f"Participant already registered in this course")
+            return True  # Consider this a success
+
+        print(f"Failed to add participant: {response.status_code} - {response.text}")
+        return False
 
     def parse_and_find_ids(self, json_response_arr: str) -> Optional[Dict[str, str]]:
         """Parse course search results and find matching course."""
@@ -501,7 +537,10 @@ the participants in bookeo.
             return False
 
     def register_participant(self) -> str:
-        """Main registration flow for a single participant."""
+        """
+        Main registration flow for a single participant.
+        Updated Nov 2025 to use new OData REST API instead of ASP.NET forms.
+        """
         # Clear any stale cookies and start fresh
         # Old cookies can interfere with the B2C login flow
         self.session.cookies.clear()
@@ -511,7 +550,7 @@ the participants in bookeo.
             return "Login Failed"
 
         if self.dry_run:
-            print("✅ Step 1/6: Login successful")
+            print("✅ Step 1/5: Login successful")
 
         # Get verification token
         response = self.session.get(f'{self.MYRC_BASE_URL}/_layout/tokenhtml')
@@ -521,7 +560,7 @@ the participants in bookeo.
         verif_token = token_match.group(1)
 
         if self.dry_run:
-            print(f"✅ Step 2/6: Got verification token: {verif_token[:20]}...")
+            print(f"✅ Step 2/5: Got verification token: {verif_token[:20]}...")
 
         # Search for the course
         response = self._search_courses(verif_token, 1)
@@ -541,121 +580,74 @@ the participants in bookeo.
         self.job_ids = self.parse_and_find_ids(json_response_arr)
         if self.job_ids is None:
             if self.dry_run:
-                print("❌ Step 3/6: No matching courses found")
+                print("❌ Step 3/5: No matching courses found")
                 print(f"   Searched for: {self.parsed_webhook.get('course_date')} | {self.parsed_webhook.get('course_location')} | {self.parsed_webhook.get('course_type')}")
             return "No Courses Found"
         if self.job_ids == "multiple":
             if self.dry_run:
-                print("⚠️ Step 3/6: Multiple matching courses found - manual review needed")
+                print("⚠️ Step 3/5: Multiple matching courses found - manual review needed")
             return "Multiple Courses Found"
 
         if self.dry_run:
-            print(f"✅ Step 3/6: Found matching course")
+            print(f"✅ Step 3/5: Found matching course")
             print(f"   MyRC Course ID: {self.output_myrc_id}")
             print(f"   Reference ID: {self.job_ids.get('ref_id', 'N/A')}")
 
-        # Get contact search page
-        response = self._get_contact_search_page()
-        response.raise_for_status()
+        # Search for existing contact using new OData API
+        contact = self._search_contact_api(verif_token)
+        contact_id = None
 
-        # Extract form state - with error handling for page structure changes
-        view_state_match = re.search(r'id="__VIEWSTATE" value="([^"]+)"', response.text)
-        view_state_gen_match = re.search(r'id="__VIEWSTATEGENERATOR" value="([^"]+)"', response.text)
-        event_validation_match = re.search(r'id="__EVENTVALIDATION" value="([^"]+)"', response.text)
-
-        if not view_state_match or not event_validation_match:
+        if contact:
+            contact_id = contact.get('contactid')
             if self.dry_run:
-                print(f"⚠️ Step 4/6: Contact search page structure may have changed")
-                print(f"   URL: {response.url}")
-                print(f"   Status: {response.status_code}")
-                # Save for debugging
-                with open('debug_contact_search.html', 'w', encoding='utf-8') as f:
-                    f.write(response.text)
-                print("   Saved page to debug_contact_search.html for inspection")
-            return "Contact Search Page Error"
-
-        view_state = view_state_match.group(1)
-        view_state_gen = view_state_gen_match.group(1) if view_state_gen_match else ""
-        event_validation = event_validation_match.group(1)
-
-        # Search for contact
-        response = self._search_contact(view_state, view_state_gen, event_validation)
-        response.raise_for_status()
-
-        final_submit_url = f"{self.MYRC_BASE_URL}/en/participantcreate/?"
-        contact_exists = "No Contact found." not in response.text
-
-        if self.dry_run:
-            if contact_exists:
-                print(f"✅ Step 4/6: Found existing contact for {self.parsed_webhook.get('email')}")
-            else:
-                print(f"✅ Step 4/6: No existing contact - would create new contact")
-                print(f"   Name: {self.parsed_webhook.get('first_name')} {self.parsed_webhook.get('last_name')}")
+                print(f"✅ Step 4/5: Found existing contact")
+                print(f"   Contact ID: {contact_id}")
+                print(f"   Name: {contact.get('fullname', 'N/A')}")
+        else:
+            if self.dry_run:
+                print(f"✅ Step 4/5: No existing contact found")
+                print(f"   Would create: {self.parsed_webhook.get('first_name')} {self.parsed_webhook.get('last_name')}")
                 print(f"   Email: {self.parsed_webhook.get('email')}")
 
-        # Check if user exists
-        if not contact_exists:
+            # In dry run, don't actually create the contact
+            if self.dry_run:
+                print("=" * 60)
+                print("🔍 DRY RUN COMPLETE - All steps passed!")
+                print("=" * 60)
+                print("   ✅ Login: Success")
+                print(f"   ✅ Course Found: {self.output_myrc_id}")
+                print("   ✅ Contact: Would create new")
+                print("   ⏸️ Registration: SKIPPED (dry run)")
+                print("")
+                print("To perform actual registration, run without dry_run=True")
+                return "Dry Run Success"
+
             # Create new contact
-            response = self._get_roster_submission_page()
-            response.raise_for_status()
+            contact_id = self._create_contact_api(verif_token)
+            if not contact_id:
+                return "Failed to Create Contact"
+            print(f"Created new contact: {contact_id}")
 
-            view_state = re.search(r'id="__VIEWSTATE" value="([^"]+)"', response.text).group(1)
-            view_state_gen = re.search(r'id="__VIEWSTATEGENERATOR" value="([^"]+)"', response.text).group(1)
+        # In dry run with existing contact, stop here
+        if self.dry_run:
+            print("=" * 60)
+            print("🔍 DRY RUN COMPLETE - All steps passed!")
+            print("=" * 60)
+            print("   ✅ Login: Success")
+            print(f"   ✅ Course Found: {self.output_myrc_id}")
+            print(f"   ✅ Contact: Exists ({contact_id})")
+            print("   ⏸️ Registration: SKIPPED (dry run)")
+            print("")
+            print("To perform actual registration, run without dry_run=True")
+            return "Dry Run Success"
 
-            # In dry run, don't actually submit new participant
-            if self.dry_run:
-                print("✅ Step 5/6: Would create new contact (skipped in dry run)")
-                print("=" * 60)
-                print("🔍 DRY RUN COMPLETE - All steps passed!")
-                print("=" * 60)
-                print("   ✅ Login: Success")
-                print(f"   ✅ Course Found: {self.output_myrc_id}")
-                print(f"   ✅ Contact: Would create new")
-                print("   ⏸️ Registration: SKIPPED (dry run)")
-                print("")
-                print("To perform actual registration, run without --dry-run")
-                return "Dry Run Success"
-
-            response = self._submit_new_participant(view_state, view_state_gen)
-            response.raise_for_status()
-
-            if "Contact with this email ID already exists" in response.text:
-                return "Email in Use Already"
-
-            participant_match = re.search(r'en/participantcreate/\?([^\s]+)\s', response.text)
-            if not participant_match:
-                return "Invalid Customer Data"
-            final_submit_url += participant_match.group(1)
+        # Add participant to course session
+        success = self._add_participant_api(verif_token, contact_id)
+        if success:
+            print(f"Successfully registered participant to course {self.output_myrc_id}")
+            return "Success"
         else:
-            # Use existing contact
-            participant_match = re.search(r'en/participantcreate/\?([^\s]+)\s', response.text)
-            if participant_match:
-                final_submit_url += participant_match.group(1)
-            response = self.session.get(final_submit_url)
-
-            # In dry run with existing contact, stop here
-            if self.dry_run:
-                print("✅ Step 5/6: Found existing contact")
-                print("=" * 60)
-                print("🔍 DRY RUN COMPLETE - All steps passed!")
-                print("=" * 60)
-                print("   ✅ Login: Success")
-                print(f"   ✅ Course Found: {self.output_myrc_id}")
-                print(f"   ✅ Contact: Exists ({self.parsed_webhook.get('email')})")
-                print("   ⏸️ Registration: SKIPPED (dry run)")
-                print("")
-                print("To perform actual registration, run without --dry-run")
-                return "Dry Run Success"
-
-        # Final submission
-        participant_id = re.search(r'\?id=([^&]+)&', final_submit_url).group(1)
-        view_state = re.search(r'id="__VIEWSTATE" value="([^"]+)"', response.text).group(1)
-        view_state_gen = re.search(r'id="__VIEWSTATEGENERATOR" value="([^"]+)"', response.text).group(1)
-
-        response = self._finalize_registration(final_submit_url, participant_id, view_state, view_state_gen)
-        response.raise_for_status()
-
-        return "Success"
+            return "Failed to Add Participant"
 
     def run(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Process a Bookeo webhook event."""

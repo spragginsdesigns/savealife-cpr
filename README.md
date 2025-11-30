@@ -12,6 +12,8 @@ This bot listens for Bookeo webhook events when customers book CPR/First Aid cou
 - Email notifications for registration status
 - Bookeo booking updates with registration results
 
+> **Note:** This is a rewrite of the original `lambda_function.py` which stopped working when Canadian Red Cross updated their MyRC portal's authentication flow (from single-step to two-step B2C) and migrated to OData REST APIs. The original form-based endpoints are now deprecated.
+
 ## How It Works
 
 ```
@@ -181,6 +183,45 @@ The bot uses Azure AD B2C with a two-step authentication:
 ### SecureConfiguration
 
 MyRC uses a PowerApps portal with encrypted grid configurations. The bot extracts `Base64SecureConfiguration` from the `data-view-layouts` attribute on the CourseManagement page, which is required for all API calls.
+
+### MyRC OData API Reference
+
+The portal uses Dynamics 365/PowerApps OData endpoints:
+
+**Contact Search:**
+```http
+GET /_api/contacts?$filter=(lastname eq 'DOE' and emailaddress1 eq 'john@example.com' and statecode eq 0)
+```
+
+**Create Contact:**
+```http
+POST /_api/contacts
+Content-Type: application/json
+
+{
+  "firstname": "John",
+  "lastname": "Doe",
+  "emailaddress1": "john@example.com",
+  "address1_line1": "123 Main St",
+  "address1_city": "Toronto",
+  "address1_stateorprovince": "ON",
+  "address1_postalcode": "M5V 1A1",
+  "telephone1": "(416) 555-1234"
+}
+```
+
+**Add Participant to Course Session:**
+```http
+POST /_api/crc_courseparticipants
+Content-Type: application/json
+
+{
+  "crc_attendee@odata.bind": "/contacts(CONTACT_GUID)",
+  "crc_coursesession@odata.bind": "/crc_coursesessions(SESSION_GUID)",
+  "crc_participanttype": "0",
+  "crc_status": "171120001"
+}
+```
 
 ## Troubleshooting
 
