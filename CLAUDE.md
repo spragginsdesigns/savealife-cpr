@@ -142,6 +142,51 @@ Designed for AWS Lambda triggered by Bookeo webhooks via API Gateway.
 - Lambda needs `lambda:InvokeFunction` permission for self-invocation
 - API Gateway must be configured to pass body to Lambda
 
+## AWS CLI Health Check Commands
+
+Use `--profile savealife` for all commands (credentials configured in AWS CLI):
+
+```bash
+# List recent log streams (most recent first)
+MSYS_NO_PATHCONV=1 aws logs describe-log-streams --profile savealife \
+  --log-group-name "/aws/lambda/savealife-cpr-bot" \
+  --order-by LastEventTime --descending --limit 10 \
+  --query "logStreams[*].[logStreamName,lastEventTimestamp]" --output table
+
+# Check for successful registrations (last 24 hours)
+START_TIME=$(python -c "import time; print(int((time.time() - 86400) * 1000))") && \
+MSYS_NO_PATHCONV=1 aws logs filter-log-events --profile savealife \
+  --log-group-name "/aws/lambda/savealife-cpr-bot" \
+  --filter-pattern "Successfully registered" --start-time $START_TIME \
+  --query "events[*].[timestamp,message]" --output text
+
+# Check for errors (last 24 hours)
+START_TIME=$(python -c "import time; print(int((time.time() - 86400) * 1000))") && \
+MSYS_NO_PATHCONV=1 aws logs filter-log-events --profile savealife \
+  --log-group-name "/aws/lambda/savealife-cpr-bot" \
+  --filter-pattern "ERROR" --start-time $START_TIME \
+  --query "events[*].[timestamp,message]" --output text
+
+# Check for "No Courses Found" (course not in MyRC)
+START_TIME=$(python -c "import time; print(int((time.time() - 86400) * 1000))") && \
+MSYS_NO_PATHCONV=1 aws logs filter-log-events --profile savealife \
+  --log-group-name "/aws/lambda/savealife-cpr-bot" \
+  --filter-pattern "No Courses Found" --start-time $START_TIME \
+  --query "events[*].[timestamp,message]" --output text
+
+# Get specific log stream details
+MSYS_NO_PATHCONV=1 aws logs get-log-events --profile savealife \
+  --log-group-name "/aws/lambda/savealife-cpr-bot" \
+  --log-stream-name 'STREAM_NAME_HERE' --limit 50 \
+  --query "events[*].message" --output text
+
+# Check Lambda function status
+aws lambda list-functions --profile savealife \
+  --query "Functions[*].[FunctionName,LastModified,Runtime]" --output table
+```
+
+Note: `MSYS_NO_PATHCONV=1` prevents Git Bash from converting `/aws/...` paths on Windows.
+
 ## Key Implementation Notes
 
 - **Substring matching**: Course type and location lookups use `in` operator, not exact match
