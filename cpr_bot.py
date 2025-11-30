@@ -676,7 +676,7 @@ the participants in bookeo.
         print(f"Processing event: {event.get('itemId', 'unknown')}")
         print(f"DEBUG RAW EVENT: {json.dumps(event, indent=2, default=str)[:2000]}")
 
-        cpr_level = "171120001"  # Always use Level C (Baby, Child & Adult CPR)
+        customer_selected_level = "171120001"  # Default Level C
         bookeo_response = []
         self.course_type = ""
 
@@ -686,7 +686,12 @@ the participants in bookeo.
                 if "Certification" in option.get('name', ''):
                     value = option.get('value', '')
 
-                    # CPR level is always Level C (set above)
+                    # Capture what the customer selected
+                    if "Level A" in value or "evel A" in value:
+                        customer_selected_level = "171120000"  # Level A
+                    elif "Level C" in value or "evel C" in value:
+                        customer_selected_level = "171120001"  # Level C
+
                     # Determine course type
                     if "Standard First Aid" in value:
                         self.course_type = "Standard First Aid Blended"
@@ -716,6 +721,20 @@ the participants in bookeo.
                 print(f"DEBUG: productName = {event['item'].get('productName')}")
                 print(f"DEBUG: startTime = {event['item'].get('startTime')}")
                 print(f"DEBUG: course_type = {self.course_type}")
+
+                # Determine CPR level based on course type:
+                # - Recert courses: Keep customer's selection (don't upgrade)
+                # - BLS courses: Keep customer's selection (no A/C distinction)
+                # - Regular courses: Always upgrade to Level C
+                is_recert = "Recert" in self.course_type
+                is_bls = "Basic Life Support" in self.course_type
+
+                if is_recert or is_bls:
+                    cpr_level = customer_selected_level  # Keep customer's choice
+                    print(f"DEBUG: Recert/BLS course - keeping customer level: {'A' if cpr_level == '171120000' else 'C'}")
+                else:
+                    cpr_level = "171120001"  # Always Level C for regular courses
+                    print(f"DEBUG: Regular course - upgrading to Level C")
 
                 self.parsed_webhook = {
                     "course_type": self.course_type,
