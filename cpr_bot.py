@@ -725,11 +725,16 @@ the participants in bookeo.
                 # Determine CPR level based on course type:
                 # - Recert courses: Keep customer's selection (don't upgrade)
                 # - BLS courses: Keep customer's selection (no A/C distinction)
+                # - Babysitter/Stay Safe: No CPR level (set to None)
                 # - Regular courses: Always upgrade to Level C
                 is_recert = "Recert" in self.course_type
                 is_bls = "Basic Life Support" in self.course_type
+                is_no_cpr_level = any(x in self.course_type for x in ["Babysitter", "Stay Safe"])
 
-                if is_recert or is_bls:
+                if is_no_cpr_level:
+                    cpr_level = None  # These courses don't have CPR levels
+                    print(f"DEBUG: {self.course_type} - no CPR level needed")
+                elif is_recert or is_bls:
                     cpr_level = customer_selected_level  # Keep customer's choice
                     print(f"DEBUG: Recert/BLS course - keeping customer level: {'A' if cpr_level == '171120000' else 'C'}")
                 else:
@@ -828,8 +833,10 @@ def course_name_parser(course_name: str, course_type: str) -> str:
         course_name = course_name[8:]
 
     # Map course names
-    if "Red Cross Babysitter's Course" in course_name:
+    if "Babysitter" in course_name:
         return "Babysitter Course"
+    if "Stay Safe" in course_name:
+        return "Stay Safe!"
     if "Basic Life Support" in course_name:
         if "Recertification" in course_name:
             return "Basic Life Support Recertification"
