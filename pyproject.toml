@@ -1,0 +1,22 @@
+[project]
+name = "savealife-cpr"
+version = "2.0.0"
+description = "CPR course registration automation for Canadian Red Cross MyRC portal"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.0.0",
+]
+lambda = [
+    # For AWS Lambda deployment
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
