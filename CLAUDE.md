@@ -148,3 +148,21 @@ Designed for AWS Lambda triggered by Bookeo webhooks via API Gateway.
 - **Debug logging**: Extensive `print()` statements for CloudWatch debugging
 - **Contact ID**: Returned in `entityid` header from POST `/_api/contacts`
 - **Already registered**: Treated as success if participant already in course
+
+## Important Limitation: Course Must Exist in MyRC First
+
+Bookeo and MyRC are **separate systems**:
+- **Bookeo** = Customer booking/payment system
+- **MyRC** = Red Cross certification portal
+
+The bot only works if the course session exists in MyRC **before** the customer books in Bookeo.
+
+**If a customer books before the MyRC course is created:**
+- Webhook fires → returns "No Courses Found"
+- Bot does NOT retry automatically when course is later created
+- **Manual fix required:** Re-trigger webhook from Bookeo OR manually register in MyRC
+
+**Correct workflow:**
+1. Create course session in MyRC first
+2. Customer books in Bookeo
+3. Bot auto-registers in MyRC

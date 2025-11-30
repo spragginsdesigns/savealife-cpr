@@ -263,6 +263,25 @@ This prevents Bookeo webhook timeouts while allowing the bot to take its time wi
 # 4. Async call does the actual work via CprBot().run(event)
 ```
 
+## Important: Course Sync Requirement
+
+**Bookeo and MyRC are separate systems.** The bot can only register participants if the course session already exists in MyRC.
+
+| System | Purpose |
+|--------|---------|
+| Bookeo | Customer booking/payment (where customers book) |
+| MyRC | Red Cross certification portal (where participants get registered) |
+
+**Workflow requirement:**
+1. Create the course session in MyRC **first**
+2. Then customers can book in Bookeo
+3. Bot will automatically register them in MyRC
+
+**If a customer books before the MyRC course exists:**
+- The webhook will fire and return "No Courses Found"
+- The bot does NOT automatically retry when the course is created later
+- **Manual action required:** Either re-trigger the webhook from Bookeo or manually register the participant in MyRC
+
 ## Troubleshooting
 
 ### Login Failed
@@ -271,6 +290,7 @@ This prevents Bookeo webhook timeouts while allowing the bot to take its time wi
 - The B2C policy may have changed (current: `B2C_1A_MYRC_SIGNUP_SIGNIN`)
 
 ### No Courses Found
+- **Most common cause:** The course exists in Bookeo but hasn't been created in MyRC yet
 - Verify course date format (YYYY-MM-DD)
 - Course type and location use **substring matching** (e.g., "Cambridge" matches "Cambridge Training Center")
 - Check debug logs for actual course types/locations returned by MyRC
