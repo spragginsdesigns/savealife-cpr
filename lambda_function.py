@@ -1,6 +1,46 @@
-from botocore.vendored import requests
+"""
+================================================================================
+DEPRECATED - NO LONGER IN SERVICE
+================================================================================
+
+This Lambda function is deprecated and is no longer operational or maintained.
+It has been preserved for historical documentation and reference purposes only.
+
+Original Purpose:
+    This AWS Lambda function automated the process of registering course 
+    participants from Bookeo (booking system) into the Canadian Red Cross 
+    MyRC portal for CPR/First Aid certification courses.
+
+Functionality (when active):
+    - Received webhook events from Bookeo when new bookings were created
+    - Authenticated with the Red Cross MyRC portal
+    - Searched for matching course sessions
+    - Registered participants in the Red Cross system
+    - Updated Bookeo with registration status
+    - Sent email notifications for successes/failures
+
+Deprecation Date: November 2025
+Reason: System migration / service discontinued
+
+DO NOT attempt to deploy or use this code - it will not function as the 
+external APIs and authentication mechanisms have changed.
+================================================================================
+"""
+
+# ============================================================================
+# DEPRECATED CODE - KEPT FOR DOCUMENTATION ONLY
+# ============================================================================
+
+from botocore.vendored import requests  # Note: This import is also deprecated in newer AWS Lambda
 import pickle, re, json, os, random, smtplib
+
+
 class Cprbot:
+  """
+  [DEPRECATED] CPR/First Aid course registration bot.
+  
+  This class is no longer functional and is preserved for documentation only.
+  """
   def __init__(self):
     self.secure_config=""
     self.session = requests.session()
@@ -411,4 +451,11 @@ def course_name_parser(course_name, course_type):
   return course_name
 
 def lambda_handler(event, context):
-  return Cprbot().run(event);
+  """
+  [DEPRECATED] AWS Lambda entry point - NO LONGER FUNCTIONAL.
+  
+  This handler is preserved for documentation purposes only and should not be deployed.
+  """
+  raise DeprecationWarning("This Lambda function is deprecated and no longer in service.")
+  # Original code preserved below for reference:
+  # return Cprbot().run(event)
