@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="SaveALifeBot-Logo.png" alt="SaveAlife CPR Bot Logo" width="500">
+</p>
+
 # SaveALife CPR Bot
 
 **Status: Production Ready (v2.0.0 - November 2025)**
