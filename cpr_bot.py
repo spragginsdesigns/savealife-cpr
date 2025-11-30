@@ -36,7 +36,15 @@ class CprBot:
     MYRC_BASE_URL = "https://myrc.redcross.ca"
     MYRC_SIGNIN_URL = f"{MYRC_BASE_URL}/en/SignIn"
 
-    def __init__(self):
+    def __init__(self, dry_run: bool = False):
+        """
+        Initialize the CPR Bot.
+
+        Args:
+            dry_run: If True, performs all steps except final registration.
+                     Useful for testing the flow without creating real registrations.
+        """
+        self.dry_run = dry_run
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -47,6 +55,11 @@ class CprBot:
         self.output_myrc_id = "N/A"
         self.course_type = ""
         self.cookies_path = Path("/tmp/cookies.pkl")
+
+        if self.dry_run:
+            print("=" * 60)
+            print("🔍 DRY RUN MODE - No actual registrations will be made")
+            print("=" * 60)
 
     def send_email(self, subject: str, bookeo_response: List[str], booking_number: str) -> None:
         """Send email notification about registration status."""
@@ -194,25 +207,18 @@ the participants in bookeo.
         return self.session.post(url, headers=headers, data=data)
 
     def _get_contact_search_page(self) -> requests.Response:
-        """Get the contact search page for a course session."""
-        params = {
-            'refentity': 'crc_coursesession',
-            'refid': self.job_ids["ref_id"],
-            'refrel': 'crc_coursesession_crc_courseparticipant',
-        }
+        """Get the contact search page for a course session (Updated Nov 2025)."""
+        # New URL structure: /CourseManagement/SessionParticipantsandInstructors/ContactSearch/?id=...
+        params = {'id': self.job_ids["ref_id"]}
         return self.session.get(
-            f'{self.MYRC_BASE_URL}/en/CourseManagement/SessionDetails/ContactSearch/',
+            f'{self.MYRC_BASE_URL}/CourseManagement/SessionParticipantsandInstructors/ContactSearch/',
             params=params
         )
 
     def _search_contact(self, view_state: str, view_state_gen: str,
                         event_validation: str) -> requests.Response:
         """Search for existing contact in Red Cross database."""
-        params = {
-            'refentity': 'crc_coursesession',
-            'refid': self.job_ids["ref_id"],
-            'refrel': 'crc_coursesession_crc_courseparticipant',
-        }
+        params = {'id': self.job_ids["ref_id"]}
         data = {
             '__VIEWSTATE': view_state,
             '__VIEWSTATEGENERATOR': view_state_gen,
@@ -222,7 +228,7 @@ the participants in bookeo.
             'ctl00$ctl00$ContentContainer$MainContent$btnSearch': 'Search'
         }
         return self.session.post(
-            f'{self.MYRC_BASE_URL}/en/CourseManagement/SessionDetails/ContactSearch/',
+            f'{self.MYRC_BASE_URL}/CourseManagement/SessionParticipantsandInstructors/ContactSearch/',
             params=params,
             data=data
         )
@@ -496,12 +502,16 @@ the participants in bookeo.
 
     def register_participant(self) -> str:
         """Main registration flow for a single participant."""
-        # Load cookies and attempt to use existing session
-        self._load_cookies()
+        # Clear any stale cookies and start fresh
+        # Old cookies can interfere with the B2C login flow
+        self.session.cookies.clear()
 
         # Always perform fresh login for reliability
         if not self.login():
             return "Login Failed"
+
+        if self.dry_run:
+            print("✅ Step 1/6: Login successful")
 
         # Get verification token
         response = self.session.get(f'{self.MYRC_BASE_URL}/_layout/tokenhtml')
@@ -509,6 +519,9 @@ the participants in bookeo.
         if not token_match:
             return "Failed to get verification token"
         verif_token = token_match.group(1)
+
+        if self.dry_run:
+            print(f"✅ Step 2/6: Got verification token: {verif_token[:20]}...")
 
         # Search for the course
         response = self._search_courses(verif_token, 1)
@@ -527,32 +540,81 @@ the participants in bookeo.
         # Find matching course
         self.job_ids = self.parse_and_find_ids(json_response_arr)
         if self.job_ids is None:
+            if self.dry_run:
+                print("❌ Step 3/6: No matching courses found")
+                print(f"   Searched for: {self.parsed_webhook.get('course_date')} | {self.parsed_webhook.get('course_location')} | {self.parsed_webhook.get('course_type')}")
             return "No Courses Found"
         if self.job_ids == "multiple":
+            if self.dry_run:
+                print("⚠️ Step 3/6: Multiple matching courses found - manual review needed")
             return "Multiple Courses Found"
+
+        if self.dry_run:
+            print(f"✅ Step 3/6: Found matching course")
+            print(f"   MyRC Course ID: {self.output_myrc_id}")
+            print(f"   Reference ID: {self.job_ids.get('ref_id', 'N/A')}")
 
         # Get contact search page
         response = self._get_contact_search_page()
         response.raise_for_status()
 
-        view_state = re.search(r'id="__VIEWSTATE" value="([^"]+)"', response.text).group(1)
-        view_state_gen = re.search(r'id="__VIEWSTATEGENERATOR" value="([^"]+)"', response.text).group(1)
-        event_validation = re.search(r'id="__EVENTVALIDATION" value="([^"]+)"', response.text).group(1)
+        # Extract form state - with error handling for page structure changes
+        view_state_match = re.search(r'id="__VIEWSTATE" value="([^"]+)"', response.text)
+        view_state_gen_match = re.search(r'id="__VIEWSTATEGENERATOR" value="([^"]+)"', response.text)
+        event_validation_match = re.search(r'id="__EVENTVALIDATION" value="([^"]+)"', response.text)
+
+        if not view_state_match or not event_validation_match:
+            if self.dry_run:
+                print(f"⚠️ Step 4/6: Contact search page structure may have changed")
+                print(f"   URL: {response.url}")
+                print(f"   Status: {response.status_code}")
+                # Save for debugging
+                with open('debug_contact_search.html', 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                print("   Saved page to debug_contact_search.html for inspection")
+            return "Contact Search Page Error"
+
+        view_state = view_state_match.group(1)
+        view_state_gen = view_state_gen_match.group(1) if view_state_gen_match else ""
+        event_validation = event_validation_match.group(1)
 
         # Search for contact
         response = self._search_contact(view_state, view_state_gen, event_validation)
         response.raise_for_status()
 
         final_submit_url = f"{self.MYRC_BASE_URL}/en/participantcreate/?"
+        contact_exists = "No Contact found." not in response.text
+
+        if self.dry_run:
+            if contact_exists:
+                print(f"✅ Step 4/6: Found existing contact for {self.parsed_webhook.get('email')}")
+            else:
+                print(f"✅ Step 4/6: No existing contact - would create new contact")
+                print(f"   Name: {self.parsed_webhook.get('first_name')} {self.parsed_webhook.get('last_name')}")
+                print(f"   Email: {self.parsed_webhook.get('email')}")
 
         # Check if user exists
-        if "No Contact found." in response.text:
+        if not contact_exists:
             # Create new contact
             response = self._get_roster_submission_page()
             response.raise_for_status()
 
             view_state = re.search(r'id="__VIEWSTATE" value="([^"]+)"', response.text).group(1)
             view_state_gen = re.search(r'id="__VIEWSTATEGENERATOR" value="([^"]+)"', response.text).group(1)
+
+            # In dry run, don't actually submit new participant
+            if self.dry_run:
+                print("✅ Step 5/6: Would create new contact (skipped in dry run)")
+                print("=" * 60)
+                print("🔍 DRY RUN COMPLETE - All steps passed!")
+                print("=" * 60)
+                print("   ✅ Login: Success")
+                print(f"   ✅ Course Found: {self.output_myrc_id}")
+                print(f"   ✅ Contact: Would create new")
+                print("   ⏸️ Registration: SKIPPED (dry run)")
+                print("")
+                print("To perform actual registration, run without --dry-run")
+                return "Dry Run Success"
 
             response = self._submit_new_participant(view_state, view_state_gen)
             response.raise_for_status()
@@ -570,6 +632,20 @@ the participants in bookeo.
             if participant_match:
                 final_submit_url += participant_match.group(1)
             response = self.session.get(final_submit_url)
+
+            # In dry run with existing contact, stop here
+            if self.dry_run:
+                print("✅ Step 5/6: Found existing contact")
+                print("=" * 60)
+                print("🔍 DRY RUN COMPLETE - All steps passed!")
+                print("=" * 60)
+                print("   ✅ Login: Success")
+                print(f"   ✅ Course Found: {self.output_myrc_id}")
+                print(f"   ✅ Contact: Exists ({self.parsed_webhook.get('email')})")
+                print("   ⏸️ Registration: SKIPPED (dry run)")
+                print("")
+                print("To perform actual registration, run without --dry-run")
+                return "Dry Run Success"
 
         # Final submission
         participant_id = re.search(r'\?id=([^&]+)&', final_submit_url).group(1)
