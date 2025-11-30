@@ -801,6 +801,14 @@ def course_name_parser(course_name: str, course_type: str) -> str:
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """AWS Lambda entry point."""
+    # API Gateway wraps the body as a JSON string
+    if 'body' in event:
+        import json
+        body = event['body']
+        if isinstance(body, str):
+            event = json.loads(body)
+        else:
+            event = body
     return CprBot().run(event)
 
 

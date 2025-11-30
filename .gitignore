@@ -52,3 +52,7 @@ cookies.pkl
 # Debug files
 debug_*.py
 debug_*.html
+
+# Lambda build artifacts
+lambda_package/
+lambda_deployment.zip
