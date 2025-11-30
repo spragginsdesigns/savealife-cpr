@@ -204,7 +204,10 @@ the participants in bookeo.
 
         # Entity grid endpoint for course search
         url = f'{self.MYRC_BASE_URL}/_services/entity-grid-data.json/6d6b3012-e709-4c45-a00d-df4b3befc518'
-        return self.session.post(url, headers=headers, data=data)
+        print(f"DEBUG: Searching MyRC for date: {self.parsed_webhook['course_date']}")
+        response = self.session.post(url, headers=headers, data=data)
+        print(f"DEBUG: Course search response status: {response.status_code}")
+        return response
 
     def _search_contact_api(self, verif_token: str) -> Optional[Dict[str, Any]]:
         """
@@ -339,29 +342,48 @@ the participants in bookeo.
             return None
 
         matched_ids = []
+        search_type = self.parsed_webhook["course_type"]
+        search_location = self.parsed_webhook["course_location"]
 
+        print(f"DEBUG: Looking for courses matching type='{search_type}', location='{search_location}'")
+
+        total_records = 0
         for container in jsonified:
-            for record in container.get("Records", []):
+            records = container.get("Records", [])
+            total_records += len(records)
+            for record in records:
                 matched_type = False
                 matched_location = False
                 course_id = "0"
                 ref_id = record.get("Id", "")
+                course_type_found = ""
+                location_found = ""
 
                 for attribute in record.get("Attributes", []):
                     attr_name = attribute.get("Name", "")
                     attr_value = attribute.get("Value", {})
 
                     if attr_name == "crc_coursetype":
-                        if isinstance(attr_value, dict) and attr_value.get("Name") == self.parsed_webhook["course_type"]:
-                            matched_type = True
+                        if isinstance(attr_value, dict):
+                            course_type_found = attr_value.get("Name", "")
+                            # Use substring matching instead of exact match
+                            if search_type and search_type.lower() in course_type_found.lower():
+                                matched_type = True
                     elif attr_name == "crc_facility":
-                        if isinstance(attr_value, dict) and attr_value.get("Name") == self.parsed_webhook["course_location"]:
-                            matched_location = True
+                        if isinstance(attr_value, dict):
+                            location_found = attr_value.get("Name", "")
+                            # Use substring matching instead of exact match
+                            if search_location and search_location.lower() in location_found.lower():
+                                matched_location = True
                     elif attr_name == "crc_name":
                         course_id = attr_value
 
+                print(f"DEBUG: Course {course_id} - Type: '{course_type_found}' (match={matched_type}), Location: '{location_found}' (match={matched_location})")
+
                 if matched_type and matched_location:
                     matched_ids.append({"course_id": course_id, "ref_id": ref_id})
+
+        print(f"DEBUG: Total records found: {total_records}, Matches: {len(matched_ids)}")
 
         if len(matched_ids) == 1:
             self.output_myrc_id = matched_ids[0]["course_id"]
@@ -652,8 +674,9 @@ the participants in bookeo.
     def run(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """Process a Bookeo webhook event."""
         print(f"Processing event: {event.get('itemId', 'unknown')}")
+        print(f"DEBUG RAW EVENT: {json.dumps(event, indent=2, default=str)[:2000]}")
 
-        cpr_level = "171120000"  # Default to Level A
+        cpr_level = "171120001"  # Always use Level C (Baby, Child & Adult CPR)
         bookeo_response = []
         self.course_type = ""
 
@@ -663,12 +686,7 @@ the participants in bookeo.
                 if "Certification" in option.get('name', ''):
                     value = option.get('value', '')
 
-                    # Determine CPR level
-                    if "evel A" in value:
-                        cpr_level = "171120000"
-                    elif "evel C" in value:
-                        cpr_level = "171120001"
-
+                    # CPR level is always Level C (set above)
                     # Determine course type
                     if "Standard First Aid" in value:
                         self.course_type = "Standard First Aid Blended"
@@ -694,6 +712,11 @@ the participants in bookeo.
                 address = person.get('streetAddress', {})
                 phones = person.get('phoneNumbers', [])
 
+                # Debug logging
+                print(f"DEBUG: productName = {event['item'].get('productName')}")
+                print(f"DEBUG: startTime = {event['item'].get('startTime')}")
+                print(f"DEBUG: course_type = {self.course_type}")
+
                 self.parsed_webhook = {
                     "course_type": self.course_type,
                     "course_location": event['item']['productName'].split(": ", 1)[0],
@@ -709,6 +732,7 @@ the participants in bookeo.
                     "postal_code": address.get('postcode', ''),
                     "cpr_level": cpr_level
                 }
+                print(f"DEBUG: Searching for - Date: {self.parsed_webhook['course_date']}, Location: {self.parsed_webhook['course_location']}, Type: {self.parsed_webhook['course_type']}")
             except (KeyError, IndexError, TypeError) as e:
                 print(f"Malformed participant data: {e}")
                 bookeo_response.append("Malformed Data")
@@ -801,15 +825,36 @@ def course_name_parser(course_name: str, course_type: str) -> str:
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """AWS Lambda entry point."""
+    import boto3
+
     # API Gateway wraps the body as a JSON string
     if 'body' in event:
-        import json
         body = event['body']
         if isinstance(body, str):
             event = json.loads(body)
         else:
             event = body
-    return CprBot().run(event)
+
+    # Check if this is an async processing call (has _async flag)
+    if event.get('_async_process'):
+        # This is the async invocation - do the actual work
+        del event['_async_process']
+        return CprBot().run(event)
+
+    # First call from webhook - invoke ourselves asynchronously and return fast
+    print(f"Accepted webhook for event: {event.get('itemId', 'unknown')}")
+
+    # Add flag and invoke async
+    event['_async_process'] = True
+    lambda_client = boto3.client('lambda')
+    lambda_client.invoke(
+        FunctionName=context.function_name,
+        InvocationType='Event',  # Async invocation
+        Payload=json.dumps(event)
+    )
+
+    # Return immediately to Bookeo
+    return {'statusCode': 200, 'body': 'Accepted'}
 
 
 # For local testing
