@@ -2,15 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Status
+
+**Production Ready - v2.0.0 (November 2025)**
+
 ## Project Overview
 
 SaveALife CPR Bot automates registration of CPR/First Aid course participants from Bookeo booking system into the Canadian Red Cross MyRC portal. It handles:
 - Azure AD B2C two-step authentication to MyRC
-- Course lookup by date, type, and location
-- Participant registration (new or existing contacts)
+- Course lookup by date, type, and location (substring matching)
+- Participant registration via OData REST API (new or existing contacts)
+- Smart CPR level assignment based on course type
 - Email notifications and Bookeo booking updates
+- Async Lambda invocation for fast webhook response
 
-**Why this project exists:** The original `lambda_function.py` stopped working when Canadian Red Cross updated their MyRC portal's authentication flow and APIs. This rewrite (`cpr_bot.py`) adapts to the new B2C two-step auth and updated API structure.
+**Why this project exists:** The original `lambda_function.py` stopped working when Canadian Red Cross updated their MyRC portal's authentication flow and APIs. This rewrite (`cpr_bot.py`) adapts to the new B2C two-step auth and OData REST API structure.
 
 ## Development Commands
 
@@ -100,7 +106,19 @@ Bookeo course names map to MyRC types:
 - "Emergency First Aid" → "Emergency First Aid Blended"
 - "CPR/AED" → "CPR/AED Blended"
 - "Basic Life Support" → "Basic Life Support"
+- "Babysitter's Course" → "Babysitter Course"
+- "Stay Safe!" → "Stay Safe!"
 - Recertification adds "(Recert)" suffix
+
+### CPR Level Logic
+- **Regular courses**: Always register as Level C (code `171120001`)
+- **Recert/BLS courses**: Keep customer's selection (A=`171120000`, C=`171120001`)
+- **Babysitter/Stay Safe**: No CPR level field (None)
+
+### Lambda Async Pattern
+The `lambda_handler` uses self-invocation for webhook responsiveness:
+1. First call: Parse API Gateway body, invoke self async, return `200 OK` immediately
+2. Async call (has `_async_process` flag): Execute `CprBot().run(event)`
 
 ## Environment Variables
 
@@ -117,4 +135,16 @@ EMAIL_RECIPIENTS=     # JSON array of recipients
 
 ## Deployment
 
-Designed for AWS Lambda triggered by Bookeo webhooks. Entry point: `lambda_handler(event, context)` in `cpr_bot.py`.
+Designed for AWS Lambda triggered by Bookeo webhooks via API Gateway.
+
+- Entry point: `lambda_handler(event, context)` in `cpr_bot.py`
+- Deployment package: `lambda_deployment_full.zip` (includes requests + dependencies)
+- Lambda needs `lambda:InvokeFunction` permission for self-invocation
+- API Gateway must be configured to pass body to Lambda
+
+## Key Implementation Notes
+
+- **Substring matching**: Course type and location lookups use `in` operator, not exact match
+- **Debug logging**: Extensive `print()` statements for CloudWatch debugging
+- **Contact ID**: Returned in `entityid` header from POST `/_api/contacts`
+- **Already registered**: Treated as success if participant already in course

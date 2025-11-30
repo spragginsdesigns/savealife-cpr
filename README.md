@@ -1,18 +1,25 @@
 # SaveALife CPR Bot
 
+**Status: Production Ready (v2.0.0 - November 2025)**
+
 Automated course registration bot that syncs Bookeo bookings to the Canadian Red Cross MyRC portal.
 
 ## Overview
 
 This bot listens for Bookeo webhook events when customers book CPR/First Aid courses and automatically registers them in the Canadian Red Cross MyRC system. It handles:
 
-- Azure AD B2C authentication to MyRC portal
-- Course lookup by date, type, and location
-- Participant registration (new or existing contacts)
+- Azure AD B2C two-step authentication to MyRC portal
+- Course lookup by date, type, and location (substring matching)
+- Participant registration via OData REST API (new or existing contacts)
+- Smart CPR level assignment based on course type
 - Email notifications for registration status
 - Bookeo booking updates with registration results
+- Async Lambda invocation for fast webhook response
 
-> **Note:** This is a rewrite of the original `lambda_function.py` which stopped working when Canadian Red Cross updated their MyRC portal's authentication flow (from single-step to two-step B2C) and migrated to OData REST APIs. The original form-based endpoints are now deprecated.
+> **Background:** This is a complete rewrite of the original `lambda_function.py` which stopped working when Canadian Red Cross updated their MyRC portal in late 2025. Changes included:
+> - Authentication flow changed from single-step to two-step B2C
+> - Form-based ASP.NET endpoints deprecated in favor of OData REST APIs
+> - New `data-view-layouts` attribute for SecureConfiguration extraction
 
 ## How It Works
 
@@ -152,7 +159,20 @@ The bot maps Bookeo course names to MyRC course types:
 | Emergency First Aid | Emergency First Aid Blended |
 | CPR/AED | CPR/AED Blended |
 | Basic Life Support | Basic Life Support |
+| Babysitter's Course | Babysitter Course |
+| Stay Safe! | Stay Safe! |
 | Recertification courses | (Recert) suffix |
+
+## CPR Level Logic
+
+The bot intelligently assigns CPR levels based on course type:
+
+| Course Type | CPR Level Behavior |
+|-------------|-------------------|
+| Regular courses (SFA, EFA, CPR/AED) | Always Level C (upgrade) |
+| Recertification courses | Keeps customer's selection (A or C) |
+| Basic Life Support | Keeps customer's selection |
+| Babysitter / Stay Safe! | No CPR level (not applicable) |
 
 ## Response Codes
 
@@ -163,7 +183,8 @@ The bot returns these status codes in Bookeo's externalRef field:
 | Success | Participant registered successfully |
 | No Courses Found | No matching course for date/location/type |
 | Multiple Courses Found | Ambiguous match - manual review needed |
-| Email in Use Already | Contact exists with different details |
+| Failed to Create Contact | OData API contact creation failed |
+| Failed to Add Participant | OData API participant creation failed |
 | Login Failed | MyRC authentication failed |
 | Malformed Data | Missing required participant info |
 
@@ -223,6 +244,25 @@ Content-Type: application/json
 }
 ```
 
+### Lambda Async Pattern
+
+The Lambda handler uses async invocation to respond quickly to Bookeo webhooks:
+
+1. Webhook arrives at API Gateway → Lambda
+2. Lambda immediately returns `200 OK` to Bookeo
+3. Lambda invokes itself asynchronously with the event payload
+4. Async invocation performs the actual registration work
+
+This prevents Bookeo webhook timeouts while allowing the bot to take its time with authentication and registration.
+
+```python
+# In lambda_handler:
+# 1. Parse API Gateway body
+# 2. If not async call, invoke self with InvocationType='Event'
+# 3. Return immediately to caller
+# 4. Async call does the actual work via CprBot().run(event)
+```
+
 ## Troubleshooting
 
 ### Login Failed
@@ -232,12 +272,27 @@ Content-Type: application/json
 
 ### No Courses Found
 - Verify course date format (YYYY-MM-DD)
-- Check that location name matches exactly
-- Ensure course type mapping is correct
+- Course type and location use **substring matching** (e.g., "Cambridge" matches "Cambridge Training Center")
+- Check debug logs for actual course types/locations returned by MyRC
 
 ### API Errors
 - SecureConfiguration may have expired (re-login)
 - Verification token may be stale (refresh)
+
+## Changelog
+
+### v2.0.0 (November 2025)
+- Complete rewrite for updated MyRC portal
+- Two-step Azure AD B2C authentication flow
+- OData REST API for contacts and participants (replaces deprecated form endpoints)
+- Smart CPR level logic (upgrade regular courses, preserve recert selections)
+- Babysitter Course and Stay Safe! course support
+- Substring matching for course type and location lookups
+- Async Lambda invocation pattern for webhook responsiveness
+- API Gateway body parsing support
+
+### v1.0.0 (Original)
+- `lambda_function.py` - Single-step B2C auth with form-based endpoints (deprecated)
 
 ## License
 
@@ -245,4 +300,4 @@ Private - SaveALife CPR Training
 
 ## Support
 
-For issues, contact tyler@savealifecpa.ca
+For issues, contact tyler@savealifecpr.ca
