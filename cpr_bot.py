@@ -198,7 +198,7 @@ the participants in bookeo.
             "filter": "account",
             "metaFilter": None,
             "nlSearchFilter": "",
-            "timezoneOffset": 480,  # EST offset in minutes
+            "timezoneOffset": 300,  # Eastern Time offset in minutes (UTC-5)
             "customParameters": []
         })
 
