@@ -741,9 +741,20 @@ the participants in bookeo.
                     cpr_level = "171120001"  # Always Level C for regular courses
                     print(f"DEBUG: Regular course - upgrading to Level C")
 
+                # Parse location from productName
+                # Expected format: "Location: Course Name" (e.g., "Cambridge: Standard First Aid")
+                # Zoom courses may not have location prefix (e.g., "Red Cross Babysitter's Course via Zoom")
+                product_name = event['item']['productName']
+                if ": " in product_name:
+                    course_location = product_name.split(": ", 1)[0]
+                else:
+                    # Virtual/Zoom courses without location prefix - default to Cambridge
+                    course_location = "Cambridge"
+                    print(f"DEBUG: No location prefix found in '{product_name}', defaulting to Cambridge")
+
                 self.parsed_webhook = {
                     "course_type": self.course_type,
-                    "course_location": event['item']['productName'].split(": ", 1)[0],
+                    "course_location": course_location,
                     "course_date": event['item']['startTime'].split("T", 1)[0],
                     "first_name": person.get('firstName', ''),
                     "last_name": person.get('lastName', ''),
