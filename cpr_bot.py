@@ -341,7 +341,8 @@ the participants in bookeo.
             print(f"Failed to parse course search results: {e}")
             return None
 
-        matched_ids = []
+        exact_matches = []
+        substring_matches = []
         search_type = self.parsed_webhook["course_type"]
         search_location = self.parsed_webhook["course_location"]
 
@@ -352,7 +353,8 @@ the participants in bookeo.
             records = container.get("Records", [])
             total_records += len(records)
             for record in records:
-                matched_type = False
+                exact_type_match = False
+                substring_type_match = False
                 matched_location = False
                 course_id = "0"
                 ref_id = record.get("Id", "")
@@ -366,24 +368,36 @@ the participants in bookeo.
                     if attr_name == "crc_coursetype":
                         if isinstance(attr_value, dict):
                             course_type_found = attr_value.get("Name", "")
-                            # Use substring matching instead of exact match
-                            if search_type and search_type.lower() in course_type_found.lower():
-                                matched_type = True
+                            # Check for exact match (case-insensitive)
+                            if search_type and search_type.lower() == course_type_found.lower():
+                                exact_type_match = True
+                                substring_type_match = True
+                            # Check for substring match (for backwards compatibility)
+                            elif search_type and search_type.lower() in course_type_found.lower():
+                                substring_type_match = True
                     elif attr_name == "crc_facility":
                         if isinstance(attr_value, dict):
                             location_found = attr_value.get("Name", "")
-                            # Use substring matching instead of exact match
+                            # Use substring matching for location
                             if search_location and search_location.lower() in location_found.lower():
                                 matched_location = True
                     elif attr_name == "crc_name":
                         course_id = attr_value
 
-                print(f"DEBUG: Course {course_id} - Type: '{course_type_found}' (match={matched_type}), Location: '{location_found}' (match={matched_location})")
+                match_info = "exact" if exact_type_match else ("substring" if substring_type_match else "none")
+                print(f"DEBUG: Course {course_id} - Type: '{course_type_found}' (match={match_info}), Location: '{location_found}' (match={matched_location})")
 
-                if matched_type and matched_location:
-                    matched_ids.append({"course_id": course_id, "ref_id": ref_id})
+                if matched_location:
+                    if exact_type_match:
+                        exact_matches.append({"course_id": course_id, "ref_id": ref_id})
+                    elif substring_type_match:
+                        substring_matches.append({"course_id": course_id, "ref_id": ref_id})
 
-        print(f"DEBUG: Total records found: {total_records}, Matches: {len(matched_ids)}")
+        # Prefer exact matches over substring matches
+        # This prevents "Basic Life Support" from matching "Basic Life Support Recertification"
+        matched_ids = exact_matches if exact_matches else substring_matches
+        match_type = "exact" if exact_matches else "substring"
+        print(f"DEBUG: Total records: {total_records}, Exact matches: {len(exact_matches)}, Substring matches: {len(substring_matches)}, Using: {match_type}")
 
         if len(matched_ids) == 1:
             self.output_myrc_id = matched_ids[0]["course_id"]
