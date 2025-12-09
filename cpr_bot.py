@@ -198,7 +198,7 @@ the participants in bookeo.
             "filter": "account",
             "metaFilter": None,
             "nlSearchFilter": "",
-            "timezoneOffset": 300,  # Eastern Time offset in minutes (UTC-5)
+            "timezoneOffset": 0,  # Let MyRC handle timezone (date search is by string, not timestamp)
             "customParameters": []
         })
 
