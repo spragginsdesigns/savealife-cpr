@@ -223,9 +223,13 @@ the participants in bookeo.
         }
 
         # OData query to search contacts by last name and email
+        # Escape apostrophes in OData strings by doubling them (e.g., O'Brien -> O''Brien)
+        last_name_escaped = self.parsed_webhook['last_name'].replace("'", "''")
+        email_escaped = self.parsed_webhook['email'].replace("'", "''")
+
         params = {
             '$select': 'contactid,fullname,birthdate,adx_identity_username,address1_line1,address1_line2,address1_city,address1_stateorprovince,address1_postalcode',
-            '$filter': f"(lastname eq '{self.parsed_webhook['last_name']}' and emailaddress1 eq '{self.parsed_webhook['email']}' and statecode eq 0)"
+            '$filter': f"(lastname eq '{last_name_escaped}' and emailaddress1 eq '{email_escaped}' and statecode eq 0)"
         }
 
         response = self.session.get(
